@@ -1014,6 +1014,11 @@ static int bool_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 		return 0;
 	}
 
+	if (bool->flags & COND_BOOL_FLAGS_TUNABLE) {
+		/* Skip tunables */
+		return 0;
+	}
+
 	if (state->verbose)
 		INFO(state->handle, "copying boolean %s", id);
 
@@ -1046,6 +1051,7 @@ static int bool_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 	state->boolmap[bool->s.value - 1] = new_bool->s.value;
 
 	new_bool->state = bool->state;
+	new_bool->flags = bool->flags;
 
 	return 0;
 }
@@ -1249,23 +1255,26 @@ static int copy_role_trans(expand_state_t * state, role_trans_rule_t * rules)
 
 					cur_trans = state->out->role_tr;
 					while (cur_trans) {
+						unsigned int mapped_role;
+
+						mapped_role = state->rolemap[cur->new_role - 1];
+
 						if ((cur_trans->role ==
 								i + 1) &&
 						    (cur_trans->type ==
 								j + 1) &&
 						    (cur_trans->tclass ==
 								k + 1)) {
-							if (cur_trans->
-							    new_role ==
-								cur->new_role) {
+							if (cur_trans->new_role == mapped_role) {
 								break;
 							} else {
 								ERR(state->handle,
-									"Conflicting role trans rule %s %s : %s %s",
+									"Conflicting role trans rule %s %s : %s { %s vs %s }",
 									state->out->p_role_val_to_name[i],
 									state->out->p_type_val_to_name[j],
 									state->out->p_class_val_to_name[k],
-									state->out->p_role_val_to_name[cur->new_role - 1]);
+									state->out->p_role_val_to_name[mapped_role - 1],
+									state->out->p_role_val_to_name[cur_trans->new_role - 1]);
 								return -1;
 							}
 						}
@@ -1320,6 +1329,8 @@ static int expand_filename_trans(expand_state_t *state, filename_trans_rule_t *r
 
 	cur_rule = rules;
 	while (cur_rule) {
+		uint32_t mapped_otype;
+
 		ebitmap_init(&stypes);
 		ebitmap_init(&ttypes);
 
@@ -1335,6 +1346,8 @@ static int expand_filename_trans(expand_state_t *state, filename_trans_rule_t *r
 			return -1;
 		}
 
+		mapped_otype = state->typemap[cur_rule->otype - 1];
+
 		ebitmap_for_each_bit(&stypes, snode, i) {
 			if (!ebitmap_node_get_bit(snode, i))
 				continue;
@@ -1349,7 +1362,7 @@ static int expand_filename_trans(expand_state_t *state, filename_trans_rule_t *r
 					    (cur_trans->tclass == cur_rule->tclass) &&
 					    (!strcmp(cur_trans->name, cur_rule->name))) {
 						/* duplicate rule, who cares */
-						if (cur_trans->otype == cur_rule->otype)
+						if (cur_trans->otype == mapped_otype)
 							break;
 
 						ERR(state->handle, "Conflicting filename trans rules %s %s %s : %s otype1:%s otype2:%s",
@@ -1358,7 +1371,7 @@ static int expand_filename_trans(expand_state_t *state, filename_trans_rule_t *r
 						    state->out->p_type_val_to_name[j],
 						    state->out->p_class_val_to_name[cur_trans->tclass - 1],
 						    state->out->p_type_val_to_name[cur_trans->otype - 1],
-						    state->out->p_type_val_to_name[state->typemap[cur_rule->otype - 1] - 1]);
+						    state->out->p_type_val_to_name[mapped_otype - 1]);
 						    
 						return -1;
 					}
@@ -1388,7 +1401,7 @@ static int expand_filename_trans(expand_state_t *state, filename_trans_rule_t *r
 				new_trans->stype = i + 1;
 				new_trans->ttype = j + 1;
 				new_trans->tclass = cur_rule->tclass;
-				new_trans->otype = state->typemap[cur_rule->otype - 1];
+				new_trans->otype = mapped_otype;
 			}
 		}
 
@@ -1937,6 +1950,13 @@ static int cond_node_copy(expand_state_t * state, cond_node_t * cn)
 	if (cond_node_copy(state, cn->next)) {
 		return -1;
 	}
+
+	/* If current cond_node_t is of tunable, its effective branch
+	 * has been appended to its home decl->avrules list during link
+	 * and now we should just skip it. */
+	if (cn->flags & COND_NODE_FLAGS_TUNABLE)
+		return 0;
+
 	if (cond_normalize_expr(state->base, cn)) {
 		ERR(state->handle, "Error while normalizing conditional");
 		return -1;
@@ -2662,6 +2682,106 @@ int expand_module_avrules(sepol_handle_t * handle, policydb_t * base,
 	return copy_and_expand_avrule_block(&state);
 }
 
+static void discard_tunables(sepol_handle_t *sh, policydb_t *pol)
+{
+	avrule_block_t *block;
+	avrule_decl_t *decl;
+	cond_node_t *cur_node;
+	cond_expr_t *cur_expr;
+	int cur_state, preserve_tunables = 0;
+	avrule_t *tail, *to_be_appended;
+
+	if (sh && sh->preserve_tunables)
+		preserve_tunables = 1;
+
+	/* Iterate through all cond_node of all enabled decls, if a cond_node
+	 * is about tunable, calculate its state value and concatenate one of
+	 * its avrule list to the current decl->avrules list. On the other
+	 * hand, the disabled unused branch of a tunable would be discarded.
+	 *
+	 * Note, such tunable cond_node would be skipped over in expansion,
+	 * so we won't have to worry about removing it from decl->cond_list
+	 * here :-)
+	 *
+	 * If tunables are requested to be preserved then they would be
+	 * "transformed" as booleans by having their TUNABLE flag cleared.
+	 */
+	for (block = pol->global; block != NULL; block = block->next) {
+		decl = block->enabled;
+		if (decl == NULL || decl->enabled == 0)
+			continue;
+
+		tail = decl->avrules;
+		while (tail && tail->next)
+			tail = tail->next;
+
+		for (cur_node = decl->cond_list; cur_node != NULL;
+		     cur_node = cur_node->next) {
+			int booleans, tunables, i;
+			cond_bool_datum_t *booldatum;
+			cond_bool_datum_t *tmp[COND_EXPR_MAXDEPTH];
+
+			booleans = tunables = 0;
+			memset(tmp, 0, sizeof(cond_bool_datum_t *) * COND_EXPR_MAXDEPTH);
+
+			for (cur_expr = cur_node->expr; cur_expr != NULL;
+			     cur_expr = cur_expr->next) {
+				if (cur_expr->expr_type != COND_BOOL)
+					continue;
+				booldatum = pol->bool_val_to_struct[cur_expr->bool - 1];
+				if (booldatum->flags & COND_BOOL_FLAGS_TUNABLE)
+					tmp[tunables++] = booldatum;
+				else
+					booleans++;
+			}
+
+			/* bool_copy_callback() at link phase has ensured
+			 * that no mixture of tunables and booleans in one
+			 * expression. However, this would be broken by the
+			 * request to preserve tunables */
+			if (!preserve_tunables)
+				assert(!(booleans && tunables));
+
+			if (booleans || preserve_tunables) {
+				cur_node->flags &= ~COND_NODE_FLAGS_TUNABLE;
+				if (tunables) {
+					for (i = 0; i < tunables; i++)
+						tmp[i]->flags &= ~COND_BOOL_FLAGS_TUNABLE;
+				}
+			} else {
+				cur_node->flags |= COND_NODE_FLAGS_TUNABLE;
+				cur_state = cond_evaluate_expr(pol, cur_node->expr);
+				if (cur_state == -1) {
+					printf("Expression result was "
+					       "undefined, skipping all"
+					       "rules\n");
+					continue;
+				}
+
+				to_be_appended = (cur_state == 1) ?
+					cur_node->avtrue_list : cur_node->avfalse_list;
+
+				if (tail)
+					tail->next = to_be_appended;
+				else
+					tail = decl->avrules = to_be_appended;
+
+				/* Now that the effective branch has been
+				 * appended, neutralize its original pointer */
+				if (cur_state == 1)
+					cur_node->avtrue_list = NULL;
+				else
+					cur_node->avfalse_list = NULL;
+
+				/* Update the tail of decl->avrules for
+				 * further concatenation */
+				while (tail && tail->next)
+					tail = tail->next;
+			}
+		}
+	}
+}
+
 /* Linking should always be done before calling expand, even if
  * there is only a base since all optionals are dealt with at link time
  * the base passed in should be indexed and avrule blocks should be 
@@ -2674,6 +2794,16 @@ int expand_module(sepol_handle_t * handle,
 	unsigned int i;
 	expand_state_t state;
 	avrule_block_t *curblock;
+
+	/* Append tunable's avtrue_list or avfalse_list to the avrules list
+	 * of its home decl depending on its state value, so that the effect
+	 * rules of a tunable would be added to te_avtab permanently. Whereas
+	 * the disabled unused branch would be discarded.
+	 *
+	 * Originally this function is called at the very end of link phase,
+	 * however, we need to keep the linked policy intact for analysis
+	 * purpose. */
+	discard_tunables(handle, base);
 
 	expand_state_init(&state);
 
@@ -2831,9 +2961,6 @@ int expand_module(sepol_handle_t * handle,
 		/* copy roles */
 		if (hashtab_map
 		    (decl->p_roles.table, role_copy_callback, &state))
-			goto cleanup;
-		if (hashtab_map
-		    (decl->p_roles.table, role_fix_callback, &state))
 			goto cleanup;
 
 		/* copy users */

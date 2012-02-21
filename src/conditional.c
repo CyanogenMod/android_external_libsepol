@@ -160,6 +160,7 @@ cond_node_t *cond_node_create(policydb_t * p, cond_node_t * node)
 		for (i = 0; i < min(node->nbools, COND_MAX_BOOLS); i++)
 			new_node->bool_ids[i] = node->bool_ids[i];
 		new_node->expr_pre_comp = node->expr_pre_comp;
+		new_node->flags = node->flags;
 	}
 
 	return new_node;
@@ -563,8 +564,8 @@ static int bool_isvalid(cond_bool_datum_t * b)
 	return 1;
 }
 
-int cond_read_bool(policydb_t * p
-		   __attribute__ ((unused)), hashtab_t h,
+int cond_read_bool(policydb_t * p,
+		   hashtab_t h,
 		   struct policy_file *fp)
 {
 	char *key = 0;
@@ -596,6 +597,15 @@ int cond_read_bool(policydb_t * p
 	if (rc < 0)
 		goto err;
 	key[len] = 0;
+
+	if (p->policy_type != POLICY_KERN &&
+	    p->policyvers >= MOD_POLICYDB_VERSION_TUNABLE_SEP) {
+		rc = next_entry(buf, fp, sizeof(uint32_t));
+		if (rc < 0)
+			goto err;
+		booldatum->flags = le32_to_cpu(buf[0]);
+	}
+
 	if (hashtab_insert(h, key, booldatum))
 		goto err;
 
@@ -808,6 +818,14 @@ static int cond_read_node(policydb_t * p, cond_node_t * node, void *fp)
 			goto err;
 		if (avrule_read_list(p, &node->avfalse_list, fp))
 			goto err;
+	}
+
+	if (p->policy_type != POLICY_KERN &&
+	    p->policyvers >= MOD_POLICYDB_VERSION_TUNABLE_SEP) {
+		rc = next_entry(buf, fp, sizeof(uint32_t));
+		if (rc < 0)
+			goto err;
+		node->flags = le32_to_cpu(buf[0]);
 	}
 
 	return 0;
