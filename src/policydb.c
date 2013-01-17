@@ -3447,7 +3447,7 @@ static int avrule_block_read(policydb_t * p,
 			 * decl chain in its correct order */
 			if (curblock->branch_list == NULL) {
 				curblock->branch_list = curdecl;
-			} else {
+			} else if (last_decl != NULL) {
 				last_decl->next = curdecl;
 			}
 			last_decl = curdecl;
@@ -3456,7 +3456,7 @@ static int avrule_block_read(policydb_t * p,
 
 		if (*block == NULL) {
 			*block = curblock;
-		} else {
+		} else if (last_block != NULL) {
 			last_block->next = curblock;
 		}
 		last_block = curblock;

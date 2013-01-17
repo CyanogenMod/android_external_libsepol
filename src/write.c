@@ -1810,6 +1810,7 @@ static int scope_write(hashtab_key_t key, hashtab_datum_t datum, void *ptr)
 	buf[0] = cpu_to_le32(key_len);
 	if (put_entry(buf, sizeof(*buf), 1, fp) != 1 ||
 	    put_entry(key, 1, key_len, fp) != key_len) {
+		free(dyn_buf);
 		return POLICYDB_ERROR;
 	}
 	buf[0] = cpu_to_le32(scope->scope);

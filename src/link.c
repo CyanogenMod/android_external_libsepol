@@ -291,6 +291,7 @@ static int class_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 			}
 			new_id = strdup(id);
 			if (new_id == NULL) {
+				symtab_destroy(&new_class->permissions);
 				ERR(state->handle, "Memory error\n");
 				ret = SEPOL_ERR;
 				goto err;
@@ -299,6 +300,7 @@ static int class_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 					     (hashtab_key_t) new_id,
 					     (hashtab_datum_t) new_class);
 			if (ret) {
+				symtab_destroy(&new_class->permissions);
 				ERR(state->handle,
 				    "could not insert new class into symtab");
 				goto err;
@@ -1300,7 +1302,7 @@ static int copy_avrule_list(avrule_t * list, avrule_t ** dst,
 
 			if (new_rule->perms == NULL) {
 				new_rule->perms = new_perm;
-			} else {
+			} else if (tail_perm) {
 				tail_perm->next = new_perm;
 			}
 			tail_perm = new_perm;
@@ -1765,6 +1767,7 @@ static int copy_avrule_block(link_state_t * state, policy_module_t * module,
 			new_decl->module_name = strdup(module->policy->name);
 			if (new_decl->module_name == NULL) {
 				ERR(state->handle, "Out of memory\n");
+				avrule_decl_destroy(new_decl);
 				ret = -1;
 				goto cleanup;
 			}
@@ -1784,6 +1787,7 @@ static int copy_avrule_block(link_state_t * state, policy_module_t * module,
 
 		ret = copy_avrule_decl(state, module, decl, new_decl);
 		if (ret) {
+			avrule_decl_destroy(new_decl);
 			goto cleanup;
 		}
 

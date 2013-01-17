@@ -251,6 +251,7 @@ static int common_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 	new_id = strdup(id);
 	if (!new_id) {
 		ERR(state->handle, "Out of memory!");
+		symtab_destroy(&new_common->permissions);
 		free(new_common);
 		return -1;
 	}
@@ -263,6 +264,7 @@ static int common_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 			   (hashtab_datum_t *) new_common);
 	if (ret) {
 		ERR(state->handle, "hashtab overflow");
+		symtab_destroy(&new_common->permissions);
 		free(new_common);
 		free(new_id);
 		return -1;
@@ -812,6 +814,7 @@ static int role_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 		new_id = strdup(id);
 		if (!new_id) {
 			ERR(state->handle, "Out of memory!");
+			free(new_role);
 			return -1;
 		}
 
@@ -963,6 +966,7 @@ static int user_copy_callback(hashtab_key_t key, hashtab_datum_t datum,
 		new_id = strdup(id);
 		if (!new_id) {
 			ERR(state->handle, "Out of memory!");
+			free(new_user);
 			return -1;
 		}
 		ret = hashtab_insert(state->out->p_users.table,
@@ -1982,6 +1986,7 @@ static int cond_node_copy(expand_state_t * state, cond_node_t * cn)
 
 	if (cond_node_map_bools(state, tmp)) {
 		ERR(state->handle, "Error mapping booleans");
+		free(tmp);
 		return -1;
 	}
 
@@ -2189,6 +2194,7 @@ static int genfs_copy(expand_state_t * state)
 		newgenfs->fstype = strdup(genfs->fstype);
 		if (!newgenfs->fstype) {
 			ERR(state->handle, "Out of memory!");
+			free(newgenfs);
 			return -1;
 		}
 
@@ -2197,12 +2203,17 @@ static int genfs_copy(expand_state_t * state)
 			newc = malloc(sizeof(ocontext_t));
 			if (!newc) {
 				ERR(state->handle, "Out of memory!");
+				free(newgenfs->fstype);
+				free(newgenfs);
 				return -1;
 			}
 			memset(newc, 0, sizeof(ocontext_t));
 			newc->u.name = strdup(c->u.name);
 			if (!newc->u.name) {
 				ERR(state->handle, "Out of memory!");
+				free(newc);
+				free(newgenfs->fstype);
+				free(newgenfs);
 				return -1;
 			}
 			newc->v.sclass = c->v.sclass;
