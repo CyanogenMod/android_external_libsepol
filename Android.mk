@@ -97,7 +97,9 @@ LOCAL_MODULE_CLASS := EXECUTABLES
 include $(BUILD_HOST_EXECUTABLE)
 
 
-### DEVICE MODULES, required by busybox with selinux enabled ###
+### DEVICE LIBS ###
+
+ifeq ($(HAVE_SELINUX),true)
 
 ##
 # libsepol.a
@@ -112,4 +114,6 @@ LOCAL_SRC_FILES := $(common_src_files)  $(hostonly_src_files)
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 include $(BUILD_STATIC_LIBRARY)
+
+endif # HAVE_SELINUX
 
