@@ -7,22 +7,7 @@
 
 #include <sepol/policydb/policydb.h>
 
-#ifdef __BIONIC__
-// from uclibc
-enum {
-    /* Query current state of the locking status.  */
-    FSETLOCKING_QUERY = 0,
-    #define FSETLOCKING_QUERY   FSETLOCKING_QUERY
-    /* The library protects all uses of the stream functions, except for
-       uses of the *_unlocked functions, by calls equivalent to flockfile().  */
-    FSETLOCKING_INTERNAL,
-    #define FSETLOCKING_INTERNAL       FSETLOCKING_INTERNAL
-    /* The user will take care of locking.  */
-    FSETLOCKING_BYCALLER
-    #define FSETLOCKING_BYCALLER       FSETLOCKING_BYCALLER
-};
-#elif !defined(DARWIN)
-// glibc
+#ifndef DARWIN
 #include <stdio_ext.h>
 #endif
 
